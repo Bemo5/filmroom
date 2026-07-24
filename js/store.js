@@ -120,6 +120,9 @@ export async function addFilmToRoom(roomId, film, user) {
     addedAt: serverTimestamp(),
   }, { merge: true });
 }
+export function deleteRoomFilm(roomId, filmId) {
+  return deleteDoc(doc(db, 'rooms', roomId, 'films', String(filmId)));
+}
 export function watchRoomFilms(roomId, cb) {
   const q = query(collection(db, 'rooms', roomId, 'films'), orderBy('addedAt', 'desc'));
   return onSnapshot(q, (s) => cb(s.docs.map((d) => ({ id: d.id, ...d.data() }))));

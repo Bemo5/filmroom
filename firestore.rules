@@ -63,7 +63,7 @@ service cloud.firestore {
 
       match /films/{filmId} {
         allow read, create, update: if isApproved() && request.auth.uid in roomMembers(roomId);
-        allow delete: if isAdmin();
+        allow delete: if isAdmin() || (isApproved() && request.auth.uid in roomMembers(roomId));
 
         match /takes/{uid} {
           allow read:  if isApproved() && request.auth.uid in roomMembers(roomId);

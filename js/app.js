@@ -257,7 +257,7 @@ async function viewRoom(roomId) {
       </div>
     </div>
     <button class="btn primary block" id="add">＋ Add a film</button>
-    <div class="row-between mt"><span class="section-title" style="margin:0">Films</span>${sortSelect('roomSort', ROOM_SORTS, roomSort)}</div>
+    <div class="row-between mt"><span class="section-title" style="margin:0">Films · hold to delete</span>${sortSelect('roomSort', ROOM_SORTS, roomSort)}</div>
     <div id="films" class="list mt"><div class="empty"><span class="spinner"></span></div></div>`);
   document.getElementById('add').onclick = () => searchSheet((film) => S.addFilmToRoom(roomId, film, me));
   const mng = document.getElementById('manage');
@@ -298,7 +298,7 @@ async function viewRoom(roomId) {
       const takesHTML = takes.length
         ? takes.slice().sort((a, b) => b.rating - a.rating).map(takeHTML).join('') || `<div class="faint" style="font-size:13px;margin-top:10px">No visible takes.</div>`
         : `<div class="faint" style="font-size:13px;margin-top:10px">No takes yet.</div>`;
-      return `<div class="card"><div class="film">
+      return `<div class="card" data-film="${f.id}"><div class="film">
         ${posterEl(f.posterPath)}
         <div class="info">
           <div class="title">${esc(f.title)}</div>
@@ -316,6 +316,11 @@ async function viewRoom(roomId) {
           onSave: async (rating, review) => { await S.saveTake(roomId, room.name, f, me, rating, review); },
         });
       };
+    });
+    // Long-press (or right-click) a film to delete it from the room.
+    box.querySelectorAll('[data-film]').forEach((el) => {
+      const f = roomFilms.find((x) => x.id === el.dataset.film);
+      bindHold(el, () => {}, () => roomFilmDialog(f, roomId));
     });
   };
 
@@ -713,6 +718,23 @@ function bindHold(el, onTap, onHold) {
   el.addEventListener('pointercancel', cancel);
   el.addEventListener('pointerleave', cancel);
   el.addEventListener('contextmenu', (e) => { e.preventDefault(); cancel(); navigator.vibrate?.(12); onHold(); });
+}
+
+function roomFilmDialog(f, roomId) {
+  const ov = modal(`
+    <div class="u-name" style="font-size:19px">${esc(f.title)}</div>
+    <div class="dialog-sub">${esc(f.year || '—')}${f.director ? ' · dir. ' + esc(f.director) : ''}</div>
+    <div class="dialog-list"><button class="btn danger block" data-act="del">Delete film from room</button></div>
+    <button class="btn ghost block mt" data-x>Close</button>`);
+  const close = () => ov.remove();
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  ov.querySelector('[data-x]').onclick = close;
+  ov.querySelector('[data-act="del"]').onclick = async () => {
+    if (await confirmDialog({ title: 'Delete this film?', message: 'Removes it and everyone’s ratings for it from this room.', confirmText: 'Delete film', danger: true })) {
+      await S.deleteRoomFilm(roomId, f.id);
+    }
+    close();
+  };
 }
 
 function roomActionsDialog(r) {
