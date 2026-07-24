@@ -30,7 +30,13 @@ if (!isConfigured) {
     me = user;
     clearSubs();
     if (!user) { profile = null; return renderAuth(); }
+    // Just-signed-up users trigger this before their /users doc finishes
+    // writing — retry briefly before assuming they're unregistered.
     profile = await S.getProfile(user.uid);
+    for (let i = 0; !profile && i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 400));
+      profile = await S.getProfile(user.uid);
+    }
     if (!profile) { profile = { status: 'pending' }; }
     if (profile.status === 'pending') return renderGate('pending');
     if (profile.status === 'revoked') return renderGate('revoked');
