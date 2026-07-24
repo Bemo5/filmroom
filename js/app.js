@@ -162,9 +162,9 @@ function route() {
 // ---------------------------------------------------------------- rooms list
 function viewRooms() {
   shell(`
-    <div class="row-between">
-      <div><h1>Rooms</h1><p class="subtitle">Private spaces to rate films together.</p></div>
-      <button class="btn primary sm" id="new">+ New</button>
+    <div class="page-head row-between">
+      <div><h1>Rooms</h1><p class="subtitle">Rate films together, privately.</p></div>
+      <button class="btn primary sm" id="new">New room</button>
     </div>
     <div id="rooms" class="list"><div class="empty"><span class="spinner"></span></div></div>`);
   document.getElementById('new').onclick = newRoomSheet;
@@ -177,7 +177,7 @@ function viewRooms() {
     }
     box.innerHTML = rooms
       .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))
-      .map((r) => `<div class="card"><div class="room-row" onclick="location.hash='#/room/${r.id}'">
+      .map((r) => `<div class="card tap" onclick="location.hash='#/room/${r.id}'"><div class="room-row">
         <div class="avatar">${esc(r.emoji || '🎬')}</div>
         <div class="meta"><div class="name">${esc(r.name)}</div>
           <div class="sub">${r.members.length} member${r.members.length === 1 ? '' : 's'}</div></div>
@@ -204,15 +204,18 @@ async function viewRoom(roomId) {
   if (!room) { location.hash = '#/rooms'; return; }
   const isOwner = room.createdBy === me.uid;
   const isAdmin = profile.role === 'admin';
+  const memberLabel = `${room.members.length} member${room.members.length === 1 ? '' : 's'}`;
   shell(`
-    <button class="btn ghost sm" onclick="location.hash='#/rooms'">‹ Rooms</button>
-    <div class="row-between mt">
-      <h1>${esc(room.emoji)} ${esc(room.name)}</h1>
-      <button class="btn primary sm" id="add">+ Film</button>
+    <button class="btn ghost sm" onclick="location.hash='#/rooms'">‹ All rooms</button>
+    <div class="detail-head">
+      <h1><span class="room-emoji">${esc(room.emoji)}</span> ${esc(room.name)}</h1>
+      <div class="row-between mt">
+        <span class="subtitle" style="margin:0">${memberLabel}</span>
+        ${isOwner || isAdmin ? '<button class="btn ghost sm" id="manage">Manage room</button>' : ''}
+      </div>
     </div>
-    <p class="subtitle">${room.members.length} member${room.members.length === 1 ? '' : 's'}
-      ${isOwner || isAdmin ? '· <button class="btn ghost sm" id="manage">Manage</button>' : ''}</p>
-    <div id="films" class="list"><div class="empty"><span class="spinner"></span></div></div>`);
+    <button class="btn primary block" id="add">＋ Add a film</button>
+    <div id="films" class="list mt"><div class="empty"><span class="spinner"></span></div></div>`);
   document.getElementById('add').onclick = () => searchSheet((film) => S.addFilmToRoom(roomId, film, me));
   const mng = document.getElementById('manage');
   if (mng) mng.onclick = () => manageRoomSheet(room, isAdmin);
@@ -231,8 +234,8 @@ async function viewRoom(roomId) {
           <div class="info">
             <div class="title">${esc(f.title)}</div>
             <div class="year">${esc(f.year)}</div>
-            <div class="mt"><button class="btn primary sm" data-rate="${f.id}">Rate / edit</button></div>
-            <div class="takes" id="takes-${f.id}"><div class="faint" style="font-size:13px;margin-top:10px">Loading takes…</div></div>
+            <div class="mt"><button class="btn outline sm" data-rate="${f.id}">★ Your rating</button></div>
+            <div class="takes" id="takes-${f.id}"><div class="faint" style="font-size:13px;margin-top:12px">Loading…</div></div>
           </div>
         </div>
       </div>`).join('');
@@ -291,15 +294,19 @@ async function manageRoomSheet(room, isAdmin) {
   add.querySelectorAll('[data-add]').forEach((b) => b.onclick = async () => { await S.addMember(room.id, b.dataset.add); closeSheet(); route(); });
   mem.querySelectorAll('[data-rm]').forEach((b) => b.onclick = async () => { await S.removeMember(room.id, b.dataset.rm); closeSheet(); route(); });
   const del = document.getElementById('del');
-  if (del) del.onclick = async () => { if (confirm('Delete this room for everyone?')) { await S.deleteRoom(room.id); closeSheet(); location.hash = '#/rooms'; } };
+  if (del) del.onclick = async () => {
+    if (await confirmDialog({ title: 'Delete this room?', message: 'It disappears for everyone in it. Films and takes are gone for good.', confirmText: 'Delete room', danger: true })) {
+      await S.deleteRoom(room.id); closeSheet(); location.hash = '#/rooms';
+    }
+  };
 }
 
 // ---------------------------------------------------------------- diary
 function viewDiary() {
   shell(`
-    <div class="row-between">
-      <div><h1>Your diary</h1><p class="subtitle">Everything you've rated.</p></div>
-      <button class="btn primary sm" id="add">+ Film</button>
+    <div class="page-head row-between">
+      <div><h1>Your diary</h1><p class="subtitle">Every film you've rated.</p></div>
+      <button class="btn primary sm" id="add">Add film</button>
     </div>
     <div id="diary" class="list"><div class="empty"><span class="spinner"></span></div></div>`);
   document.getElementById('add').onclick = () => searchSheet((film) =>
@@ -326,22 +333,38 @@ function viewDiary() {
         </div></div></div>`).join('');
     box.querySelectorAll('[data-edit]').forEach((b) => { const e = entries.find((x) => x.id === b.dataset.edit);
       b.onclick = () => rateSheet(e, (rating, review) => S.saveDiaryEntry(me.uid, e, rating, review)); });
-    box.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => {
-      if (confirm('Remove from diary?')) S.deleteDiaryEntry(me.uid, b.dataset.del); });
+    box.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
+      if (await confirmDialog({ title: 'Remove from diary?', message: 'This deletes your rating and take for this film.', confirmText: 'Remove', danger: true }))
+        S.deleteDiaryEntry(me.uid, b.dataset.del);
+    });
   }));
 }
 
 // ---------------------------------------------------------------- admin
+function userBadge(u) {
+  if (u.role === 'admin') return '<span class="badge admin">admin</span>';
+  if (u.status === 'revoked') return '<span class="badge revoked">revoked</span>';
+  if (u.status === 'pending') return '<span class="badge pending">pending</span>';
+  return '';
+}
+
 async function viewAdmin() {
-  shell(`<h1>Admin</h1><p class="subtitle">Approvals, access, and settings.</p>
+  shell(`
+    <div class="page-head"><h1>Admin</h1><p class="subtitle">Approvals, access, and settings.</p></div>
     <div id="pending"></div>
-    <div class="section-title">Everyone</div><div id="all" class="list"></div>
+    <div class="section-title">Everyone · tap to manage</div>
+    <div id="all" class="list"></div>
     <div class="section-title">Settings</div>
     <div class="card row-between">
-      <div><b>Hide revoked users' takes</b><div class="faint" style="font-size:13px">Off = they stay, marked "[removed user]".</div></div>
-      <label class="switch"><input type="checkbox" id="hide" ${cfg.hideRevokedTakes ? 'checked' : ''}></label>
+      <div><b>Hide revoked members' takes</b>
+        <div class="faint" style="font-size:13px;margin-top:2px">Off = takes stay, shown as “[removed user]”.</div></div>
+      <button class="btn sm" id="hide" style="min-width:64px">${cfg.hideRevokedTakes ? 'On' : 'Off'}</button>
     </div>`);
-  document.getElementById('hide').onchange = async (e) => { cfg.hideRevokedTakes = e.target.checked; await S.setAppConfig({ hideRevokedTakes: cfg.hideRevokedTakes }); };
+  document.getElementById('hide').onclick = async (e) => {
+    cfg.hideRevokedTakes = !cfg.hideRevokedTakes;
+    e.target.textContent = cfg.hideRevokedTakes ? 'On' : 'Off';
+    await S.setAppConfig({ hideRevokedTakes: cfg.hideRevokedTakes });
+  };
 
   const users = await S.allUsers();
   usersById = Object.fromEntries(users.map((u) => [u.uid, u]));
@@ -350,26 +373,71 @@ async function viewAdmin() {
   if (pending.length) {
     pend.innerHTML = `<div class="section-title">Pending requests</div><div class="list">` +
       pending.map((u) => `<div class="card row-between">
-        <div><b>${esc(u.name)}</b> <span class="badge pending">pending</span><div class="faint" style="font-size:13px">${esc(u.email)}</div></div>
-        <div><button class="btn primary sm" data-ok="${u.uid}">Approve</button>
+        <div><div class="u-name">${esc(u.name)} <span class="badge pending">pending</span></div>
+          <div class="u-email">${esc(u.email)}</div></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn primary sm" data-ok="${u.uid}">Approve</button>
           <button class="btn danger sm" data-no="${u.uid}">Deny</button></div></div>`).join('') + `</div>`;
   }
-  document.getElementById('all').innerHTML = users.map((u) => {
-    const badge = u.role === 'admin' ? '<span class="badge admin">admin</span>'
-      : u.status === 'revoked' ? '<span class="badge revoked">revoked</span>'
-      : u.status === 'pending' ? '<span class="badge pending">pending</span>' : '';
-    const actions = u.uid === me.uid ? '<span class="faint">you</span>'
-      : u.status === 'revoked' ? `<button class="btn sm" data-restore="${u.uid}">Restore</button>`
-      : `<button class="btn danger sm" data-revoke="${u.uid}">Revoke</button>`;
-    return `<div class="card row-between"><div><b>${esc(u.name)}</b> ${badge}
-      <div class="faint" style="font-size:13px">${esc(u.email)}</div></div><div>${actions}</div></div>`;
-  }).join('');
+  document.getElementById('all').innerHTML = users.map((u) => `
+    <div class="card tap row-between" data-user="${u.uid}">
+      <div><div class="u-name">${esc(u.name)} ${userBadge(u)}${u.uid === me.uid ? '<span class="faint" style="font-weight:500">· you</span>' : ''}</div>
+        <div class="u-email">${esc(u.email)}</div></div>
+      <div class="chev">›</div></div>`).join('');
 
   const rerun = () => viewAdmin();
   pend?.querySelectorAll('[data-ok]').forEach((b) => b.onclick = async () => { await S.setUserStatus(b.dataset.ok, 'approved'); rerun(); });
-  pend?.querySelectorAll('[data-no]').forEach((b) => b.onclick = async () => { await S.setUserStatus(b.dataset.no, 'revoked'); rerun(); });
-  app.querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => { if (confirm('Revoke this user?')) { await S.setUserStatus(b.dataset.revoke, 'revoked'); rerun(); } });
-  app.querySelectorAll('[data-restore]').forEach((b) => b.onclick = async () => { await S.setUserStatus(b.dataset.restore, 'approved'); rerun(); });
+  pend?.querySelectorAll('[data-no]').forEach((b) => b.onclick = async () => {
+    if (await confirmDialog({ title: 'Deny this request?', message: 'They won’t be able to log in.', confirmText: 'Deny', danger: true })) {
+      await S.setUserStatus(b.dataset.no, 'revoked'); rerun();
+    }
+  });
+  app.querySelectorAll('[data-user]').forEach((c) => c.onclick = () => adminUserDialog(users.find((u) => u.uid === c.dataset.user)));
+}
+
+// God-controls panel for one user.
+function adminUserDialog(u) {
+  const self = u.uid === me.uid;
+  const rows = [`<button class="btn block" data-act="rename">Rename member</button>`];
+  if (u.status === 'pending') {
+    rows.push(`<button class="btn primary block" data-act="approve">Approve request</button>`);
+    rows.push(`<button class="btn danger block" data-act="deny">Deny request</button>`);
+  } else if (!self) {
+    rows.push(u.role === 'admin'
+      ? `<button class="btn block" data-act="demote">Remove admin</button>`
+      : `<button class="btn block" data-act="promote">Make admin</button>`);
+    rows.push(u.status === 'revoked'
+      ? `<button class="btn primary block" data-act="restore">Restore access</button>`
+      : `<button class="btn danger block" data-act="revoke">Revoke access</button>`);
+  }
+  const ov = modal(`
+    <div class="u-name" style="font-size:19px">${esc(u.name)} ${userBadge(u)}</div>
+    <div class="dialog-sub">${esc(u.email)}${self ? ' · this is you' : ''}</div>
+    <div class="dialog-list">${rows.join('')}</div>
+    <button class="btn ghost block mt" data-x>Close</button>`);
+  const close = () => ov.remove();
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  ov.querySelector('[data-x]').onclick = close;
+  ov.querySelectorAll('[data-act]').forEach((b) => b.onclick = async () => {
+    const act = b.dataset.act;
+    if (act === 'rename') {
+      const name = await promptDialog({ title: 'Rename member', label: 'Display name', value: u.name, confirmText: 'Save name' });
+      if (name && name !== u.name) await S.renameUser(u.uid, name);
+    } else if (act === 'approve' || act === 'restore') {
+      await S.setUserStatus(u.uid, 'approved');
+    } else if (act === 'deny' || act === 'revoke') {
+      if (!(await confirmDialog({ title: act === 'deny' ? 'Deny this request?' : `Revoke ${u.name}?`,
+        message: act === 'deny' ? 'They won’t be able to log in.' : 'They lose access immediately. Their past takes stay, marked “[removed user]”.',
+        confirmText: act === 'deny' ? 'Deny' : 'Revoke', danger: true }))) return;
+      await S.setUserStatus(u.uid, 'revoked');
+    } else if (act === 'promote') {
+      if (!(await confirmDialog({ title: `Make ${u.name} an admin?`, message: 'They’ll get full god-controls, including over other members.', confirmText: 'Make admin' }))) return;
+      await S.setUserRole(u.uid, 'admin');
+    } else if (act === 'demote') {
+      await S.setUserRole(u.uid, 'member');
+    }
+    close(); viewAdmin();
+  });
 }
 
 // ---------------------------------------------------------------- sheets
@@ -385,6 +453,45 @@ function openSheet(title, inner) {
   return document.getElementById('sheetBody');
 }
 function closeSheet() { document.getElementById('overlay')?.remove(); }
+
+// Clean in-app dialogs — replace native alert/confirm/prompt. They stack above sheets.
+function modal(inner) {
+  const ov = document.createElement('div');
+  ov.className = 'overlay dialog-overlay';
+  ov.innerHTML = `<div class="dialog">${inner}</div>`;
+  document.body.appendChild(ov);
+  return ov;
+}
+function confirmDialog({ title, message = '', confirmText = 'Confirm', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const ov = modal(`<h2>${esc(title)}</h2>${message ? `<p class="dialog-msg">${esc(message)}</p>` : ''}
+      <div class="dialog-actions">
+        <button class="btn ghost" data-x>Cancel</button>
+        <button class="btn ${danger ? 'solid-danger' : 'primary'}" data-ok>${esc(confirmText)}</button>
+      </div>`);
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.querySelector('[data-x]').onclick = () => done(false);
+    ov.querySelector('[data-ok]').onclick = () => done(true);
+    ov.addEventListener('click', (e) => { if (e.target === ov) done(false); });
+  });
+}
+function promptDialog({ title, label, value = '', confirmText = 'Save' } = {}) {
+  return new Promise((resolve) => {
+    const ov = modal(`<h2>${esc(title)}</h2>
+      <div class="field mt"><label>${esc(label)}</label>
+        <input class="input" id="pmt" value="${esc(value)}"></div>
+      <div class="dialog-actions">
+        <button class="btn ghost" data-x>Cancel</button>
+        <button class="btn primary" data-ok>${esc(confirmText)}</button></div>`);
+    const input = ov.querySelector('#pmt');
+    setTimeout(() => { input.focus(); input.select(); }, 40);
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.querySelector('[data-x]').onclick = () => done(null);
+    ov.querySelector('[data-ok]').onclick = () => done(input.value.trim());
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(input.value.trim()); });
+    ov.addEventListener('click', (e) => { if (e.target === ov) done(null); });
+  });
+}
 
 function searchSheet(onPick) {
   const body = openSheet('Add a film', `
