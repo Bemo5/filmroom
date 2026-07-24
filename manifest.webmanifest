@@ -1,0 +1,17 @@
+{
+  "name": "Filmroom",
+  "short_name": "Filmroom",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#151217",
+  "theme_color": "#151217",
+  "description": "A private film-rating app for you and your friends.",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23151217'/><text y='.9em' x='12' font-size='72'>🎬</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
