@@ -8,10 +8,16 @@ export function formatRating(rating) {
   return s;
 }
 
-// One accent everywhere — the rating's value is carried by the number, not a
-// clashing colour. Gold when it counts, muted grey for the low end.
+// Traffic-light for the rating NUMBER only (green loved / yellow ok / red bad).
 export function ratingColor(rating) {
-  return rating >= 5 ? 'var(--gold)' : 'var(--faint)';
+  if (rating >= 7) return 'var(--rate-hi)';
+  if (rating >= 4) return 'var(--rate-mid)';
+  return 'var(--rate-lo)';
+}
+
+// Username-adjacent rating: a small star row + the plain coloured number.
+export function ratingInline(rating, size = 13) {
+  return `${starRow(rating, size)}<span class="rnum" style="color:${ratingColor(rating)}">${formatRating(rating)}</span>`;
 }
 
 // The word for a rating. With 10+ shelfRatings it ranks against the user's own
@@ -72,7 +78,7 @@ function starSVG(fill, size, glow) {
     <defs>
       <clipPath id="c${id}"><rect x="0" y="0" width="${w}" height="100"/></clipPath>
       <linearGradient id="l${id}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#F5C518"/><stop offset="1" stop-color="#E0A50A"/>
+        <stop offset="0" style="stop-color:var(--gold)"/><stop offset="1" style="stop-color:var(--gold-2)"/>
       </linearGradient>
       ${glowFilter}
     </defs>

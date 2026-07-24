@@ -58,7 +58,7 @@ export function renameUser(uid, name) {
 
 export async function getAppConfig() {
   const snap = await getDoc(doc(db, 'config', 'app'));
-  return snap.exists() ? snap.data() : { hideRevokedTakes: false };
+  return snap.exists() ? snap.data() : { hideRevokedTakes: false, theme: 'gold' };
 }
 export function setAppConfig(patch) {
   return setDoc(doc(db, 'config', 'app'), patch, { merge: true });

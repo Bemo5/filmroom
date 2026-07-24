@@ -14,9 +14,14 @@
   --muted:     #98A4AD;
   --faint:     #616D75;
 
-  --gold:   #F5C518;      /* the one accent: brand + primary + ratings */
+  --gold:   #F5C518;      /* the accent: brand + primary + stars (theme-driven) */
   --gold-2: #E0A50A;
-  --on-gold: #17191C;     /* text/icon on gold surfaces */
+  --on-gold: #17191C;     /* text/icon on accent surfaces */
+
+  /* rating number — traffic light, fixed across themes so the signal is stable */
+  --rate-hi:  #5DBB63;
+  --rate-mid: #E8B93B;
+  --rate-lo:  #E0655A;
 
   /* legacy names some code reads — mapped to the accent so nothing clashes */
   --curtain: var(--gold);
@@ -174,6 +179,9 @@ textarea.input { resize: vertical; min-height: 96px; line-height: 1.5; }
 .film .info { flex: 1; min-width: 0; }
 .film .title { font-weight: 700; font-size: 16.5px; letter-spacing: -0.02em; line-height: 1.2; }
 .film .year { color: var(--faint); font-size: 13px; margin-top: 2px; }
+.film-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.year-pill { font-size: 12px; font-weight: 700; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); padding: 2px 9px; border-radius: 7px; }
+.film-meta .avg { font-size: 12.5px; color: var(--muted); }
 
 .take { border-top: 1px solid var(--line-soft); padding-top: 12px; margin-top: 12px; }
 .take:first-child { border-top: none; padding-top: 0; margin-top: 0; }
@@ -274,6 +282,48 @@ textarea.input { resize: vertical; min-height: 96px; line-height: 1.5; }
 .mt { margin-top: 14px; }
 .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--line); border-top-color: var(--gold); border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Rating next to a name: stars + a plain coloured number (no bubble) */
+.rating-inline { display: inline-flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.rating-inline .rnum { font-weight: 800; font-size: 14.5px; letter-spacing: -0.02em; }
+.take .who { flex-wrap: wrap; }
+
+/* Admin theme picker */
+.theme-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 480px) { .theme-grid { grid-template-columns: repeat(4, 1fr); } }
+.theme-swatch {
+  display: flex; flex-direction: column; align-items: center; gap: 9px;
+  padding: 15px 10px; border-radius: 14px; cursor: pointer;
+  background: var(--p-bg); border: 1px solid var(--line);
+  color: var(--text); font-weight: 600; font-size: 13px; transition: transform .05s;
+}
+.theme-swatch:active { transform: scale(.97); }
+.theme-swatch.active { outline: 2px solid var(--gold); outline-offset: 1px; border-color: transparent; }
+.theme-swatch .sw { width: 26px; height: 26px; border-radius: 50%; background: var(--p-ac); box-shadow: 0 0 0 3px color-mix(in srgb, var(--p-ac) 22%, transparent); }
+.theme-swatch[data-theme-preview="gold"]    { --p-bg:#14181C; --p-ac:#F5C518; }
+.theme-swatch[data-theme-preview="crimson"] { --p-bg:#17110F; --p-ac:#E14B3D; }
+.theme-swatch[data-theme-preview="emerald"] { --p-bg:#0F1613; --p-ac:#35C281; }
+.theme-swatch[data-theme-preview="ocean"]   { --p-bg:#0F141C; --p-ac:#3B8EF0; }
+
+/* ---------- Full theme palettes (admin-set, global) ---------- */
+html[data-theme="crimson"] {
+  --bg:#17110F; --bg-2:#1E1613; --ink:#17110F; --ink-2:#1E1613;
+  --surface:#241A16; --surface-2:#31241D; --line:#3D2A22; --line-soft:#281C17;
+  --text:#F5ECE8; --muted:#B79C92; --faint:#7C6157;
+  --gold:#E14B3D; --gold-2:#B8382C; --on-gold:#FFFFFF;
+}
+html[data-theme="emerald"] {
+  --bg:#0F1613; --bg-2:#14201B; --ink:#0F1613; --ink-2:#14201B;
+  --surface:#182620; --surface-2:#21342B; --line:#294034; --line-soft:#1A281F;
+  --text:#ECF4EF; --muted:#96AEA2; --faint:#5E766A;
+  --gold:#35C281; --gold-2:#26996A; --on-gold:#06140D;
+}
+html[data-theme="ocean"] {
+  --bg:#0F141C; --bg-2:#141B26; --ink:#0F141C; --ink-2:#141B26;
+  --surface:#18202D; --surface-2:#212C3C; --line:#2A3648; --line-soft:#1A2130;
+  --text:#EAF0F7; --muted:#95A5B8; --faint:#5C6E86;
+  --gold:#3B8EF0; --gold-2:#2E71C8; --on-gold:#FFFFFF;
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }

@@ -1,6 +1,6 @@
 // Filmroom SPA — router + views.
 import { isConfigured } from './config.js';
-import { starRow, starInput, ratingChip, ratingLabel, formatRating } from './stars.js';
+import { starRow, starInput, ratingInline, ratingColor, ratingLabel, formatRating } from './stars.js';
 import { IMG, searchFilms } from './tmdb.js';
 import * as S from './store.js';
 
@@ -17,6 +17,15 @@ const clearSubs = () => { subs.forEach((u) => u && u()); subs = []; };
 const posterEl = (path, cls = 'poster') =>
   path ? `<img class="${cls}" src="${IMG(path)}" alt="" loading="lazy">` : `<div class="${cls} ph">🎞️</div>`;
 const brand = () => `<div class="brand"><img class="brand-mark" src="assets/logo.svg" alt=""><span class="wm">Filmroom</span></div>`;
+
+// Admin-set global themes (full cohesive palettes; see :root overrides in style.css).
+const THEMES = [
+  { id: 'gold',    name: 'Gold' },
+  { id: 'crimson', name: 'Crimson' },
+  { id: 'emerald', name: 'Emerald' },
+  { id: 'ocean',   name: 'Midnight' },
+];
+const applyTheme = (theme) => { document.documentElement.dataset.theme = theme || 'gold'; };
 
 // ---------------------------------------------------------------- boot
 if (!isConfigured) {
@@ -42,6 +51,7 @@ if (!isConfigured) {
     if (profile.status === 'pending') return renderGate('pending');
     if (profile.status === 'revoked') return renderGate('revoked');
     cfg = await S.getAppConfig();
+    applyTheme(cfg.theme);
     try {
       const users = await S.allUsers();
       usersById = Object.fromEntries(users.map((u) => [u.uid, u]));
@@ -144,7 +154,7 @@ function shell(inner) {
     <div class="container">${inner}</div>
     <div class="tabbar">
       ${tab('#/rooms', '🎬', 'Rooms')}
-      ${tab('#/diary', '📖', 'Diary')}
+      ${tab('#/diary', '🎞️', 'My Films')}
       ${isAdmin ? tab('#/admin', '🛠️', 'Admin') : ''}
     </div>`;
   document.getElementById('logout').onclick = () => S.logout();
@@ -175,13 +185,17 @@ function viewRooms() {
       box.innerHTML = `<div class="empty"><div class="ico">🍿</div>No rooms yet.<br>Create one and add your friends.</div>`;
       return;
     }
-    box.innerHTML = rooms
-      .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0))
-      .map((r) => `<div class="card tap" onclick="location.hash='#/room/${r.id}'"><div class="room-row">
+    const sorted = rooms.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    box.innerHTML = sorted
+      .map((r) => `<div class="card tap" data-room="${r.id}"><div class="room-row">
         <div class="avatar">${esc(r.emoji || '🎬')}</div>
         <div class="meta"><div class="name">${esc(r.name)}</div>
           <div class="sub">${r.members.length} member${r.members.length === 1 ? '' : 's'}</div></div>
         <div class="chev">›</div></div></div>`).join('');
+    box.querySelectorAll('[data-room]').forEach((el) => {
+      const r = sorted.find((x) => x.id === el.dataset.room);
+      bindHold(el, () => location.hash = '#/room/' + r.id, () => roomActionsDialog(r));
+    });
   }));
 }
 
@@ -233,7 +247,7 @@ async function viewRoom(roomId) {
           ${posterEl(f.posterPath)}
           <div class="info">
             <div class="title">${esc(f.title)}</div>
-            <div class="year">${esc(f.year)}</div>
+            <div class="film-meta"><span class="year-pill">${esc(f.year || '—')}</span><span class="avg" id="avg-${f.id}"></span></div>
             <div class="mt"><button class="btn outline sm" data-rate="${f.id}">★ Your rating</button></div>
             <div class="takes" id="takes-${f.id}"><div class="faint" style="font-size:13px;margin-top:12px">Loading…</div></div>
           </div>
@@ -252,6 +266,15 @@ async function viewRoom(roomId) {
 function renderTakes(filmId, takes) {
   const box = document.getElementById('takes-' + filmId);
   if (!box) return;
+  // Average across all members (respecting the hide-revoked setting).
+  const avgEl = document.getElementById('avg-' + filmId);
+  if (avgEl) {
+    const visible = takes.filter((t) => !(usersById[t.uid]?.status === 'revoked' && cfg.hideRevokedTakes));
+    if (visible.length) {
+      const a = visible.reduce((s, t) => s + t.rating, 0) / visible.length;
+      avgEl.innerHTML = `<span style="color:${ratingColor(a)};font-weight:800">${a.toFixed(1)}</span> avg · ${visible.length} rating${visible.length === 1 ? '' : 's'}`;
+    } else avgEl.textContent = 'No ratings yet';
+  }
   if (!takes.length) { box.innerHTML = `<div class="faint" style="font-size:13px;margin-top:10px">No takes yet.</div>`; return; }
   box.innerHTML = takes
     .sort((a, b) => b.rating - a.rating)
@@ -263,7 +286,7 @@ function renderTakes(filmId, takes) {
       return `<div class="take">
         <div class="who">
           <span class="name ${removed ? 'removed' : ''}">${name}</span>
-          ${ratingChip(t.rating)}
+          <span class="rating-inline">${ratingInline(t.rating, 13)}</span>
         </div>
         ${t.review ? `<div class="body">${esc(t.review)}</div>` : ''}
       </div>`;
@@ -305,14 +328,14 @@ async function manageRoomSheet(room, isAdmin) {
 function viewDiary() {
   shell(`
     <div class="page-head row-between">
-      <div><h1>Your diary</h1><p class="subtitle">Every film you've rated.</p></div>
+      <div><h1>My Films</h1><p class="subtitle" id="diaryStat">Every film you've rated.</p></div>
       <button class="btn primary sm" id="add">Add film</button>
     </div>
     <div id="diary"><div class="empty"><span class="spinner"></span></div></div>`);
   const openEntry = (e) => rateSheet(e, {
     onSave: (rating, review) => S.saveDiaryEntry(me.uid, e, rating, review),
     onDelete: async () => {
-      if (await confirmDialog({ title: 'Remove from diary?', message: 'Deletes your rating and take for this film.', confirmText: 'Remove', danger: true })) {
+      if (await confirmDialog({ title: 'Remove this film?', message: 'Deletes your rating and take from My Films.', confirmText: 'Remove', danger: true })) {
         await S.deleteDiaryEntry(me.uid, e.tmdbId); return true;
       }
     },
@@ -323,14 +346,23 @@ function viewDiary() {
     const box = document.getElementById('diary');
     if (!box) return;
     if (!entries.length) {
-      box.innerHTML = `<div class="empty"><div class="ico">🎞️</div><b>Your diary is empty.</b><br>Add a film you've seen.</div>`;
+      box.innerHTML = `<div class="empty"><div class="ico">🎞️</div><b>No films yet.</b><br>Add a film you've seen.</div>`;
       return;
     }
-    box.innerHTML = `<div class="poster-grid">${entries.map((e) => `
-      <div class="pg-item" data-id="${e.id}">
-        ${e.posterPath ? `<img class="pg-poster" src="${IMG(e.posterPath)}" alt="" loading="lazy">` : `<div class="pg-poster ph">🎞️</div>`}
-        <span class="pg-rating"><span class="st">★</span>${formatRating(e.rating)}</span>
-      </div>`).join('')}</div>`;
+    const shelf = entries.map((e) => e.rating);
+    const avg = shelf.reduce((s, r) => s + r, 0) / shelf.length;
+    const stat = document.getElementById('diaryStat');
+    if (stat) stat.innerHTML = `${entries.length} film${entries.length === 1 ? '' : 's'} · <span style="color:${ratingColor(avg)};font-weight:700">${avg.toFixed(1)}</span> average`;
+    box.innerHTML = `<div class="list">${entries.map((e) => `
+      <div class="card tap" data-id="${e.id}"><div class="film">
+        ${posterEl(e.posterPath)}
+        <div class="info">
+          <div class="title">${esc(e.title)}</div>
+          <div class="film-meta"><span class="year-pill">${esc(e.year || '—')}</span></div>
+          <div class="rating-inline mt">${ratingInline(e.rating, 15)}
+            <span class="faint" style="font-size:12.5px">· ${ratingLabel(e.rating, shelf)}</span></div>
+          ${e.review ? `<div class="body" style="margin-top:8px">${esc(e.review)}</div>` : ''}
+        </div></div></div>`).join('')}</div>`;
     box.querySelectorAll('[data-id]').forEach((el) =>
       el.onclick = () => openEntry(entries.find((x) => x.id === el.dataset.id)));
   }));
@@ -355,12 +387,23 @@ async function viewAdmin() {
       <div><b>Hide revoked members' takes</b>
         <div class="faint" style="font-size:13px;margin-top:2px">Off = takes stay, shown as “[removed user]”.</div></div>
       <button class="btn sm" id="hide" style="min-width:64px">${cfg.hideRevokedTakes ? 'On' : 'Off'}</button>
+    </div>
+    <div class="section-title">Theme · applies to everyone</div>
+    <div class="theme-grid" id="themes">
+      ${THEMES.map((t) => `<button class="theme-swatch ${((cfg.theme || 'gold') === t.id) ? 'active' : ''}" data-theme="${t.id}" data-theme-preview="${t.id}">
+        <span class="sw"></span><span class="tn">${t.name}</span></button>`).join('')}
     </div>`);
   document.getElementById('hide').onclick = async (e) => {
     cfg.hideRevokedTakes = !cfg.hideRevokedTakes;
     e.target.textContent = cfg.hideRevokedTakes ? 'On' : 'Off';
     await S.setAppConfig({ hideRevokedTakes: cfg.hideRevokedTakes });
   };
+  document.getElementById('themes').querySelectorAll('[data-theme]').forEach((b) => b.onclick = async () => {
+    cfg.theme = b.dataset.theme;
+    applyTheme(cfg.theme);
+    document.querySelectorAll('.theme-swatch').forEach((s) => s.classList.toggle('active', s.dataset.theme === cfg.theme));
+    await S.setAppConfig({ theme: cfg.theme });
+  });
 
   const users = await S.allUsers();
   usersById = Object.fromEntries(users.map((u) => [u.uid, u]));
@@ -489,6 +532,45 @@ function promptDialog({ title, label, value = '', confirmText = 'Save' } = {}) {
   });
 }
 
+// Tap vs long-press (or right-click) on the same element.
+function bindHold(el, onTap, onHold) {
+  let timer = null, sx = 0, sy = 0;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  el.addEventListener('pointerdown', (e) => {
+    sx = e.clientX; sy = e.clientY;
+    timer = setTimeout(() => { timer = null; navigator.vibrate?.(12); onHold(); }, 480);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (timer && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) cancel();
+  });
+  el.addEventListener('pointerup', () => { if (timer) { cancel(); onTap(); } });
+  el.addEventListener('pointercancel', cancel);
+  el.addEventListener('pointerleave', cancel);
+  el.addEventListener('contextmenu', (e) => { e.preventDefault(); cancel(); navigator.vibrate?.(12); onHold(); });
+}
+
+function roomActionsDialog(r) {
+  const canDelete = r.createdBy === me.uid || profile.role === 'admin';
+  const ov = modal(`
+    <div class="u-name" style="font-size:19px">${esc(r.emoji || '🎬')} ${esc(r.name)}</div>
+    <div class="dialog-sub">${r.members.length} member${r.members.length === 1 ? '' : 's'}</div>
+    <div class="dialog-list">
+      <button class="btn block" data-act="open">Open room</button>
+      ${canDelete ? `<button class="btn danger block" data-act="delete">Delete room</button>` : ''}
+    </div>
+    <button class="btn ghost block mt" data-x>Close</button>`);
+  const close = () => ov.remove();
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  ov.querySelector('[data-x]').onclick = close;
+  ov.querySelector('[data-act="open"]').onclick = () => { close(); location.hash = '#/room/' + r.id; };
+  const delBtn = ov.querySelector('[data-act="delete"]');
+  if (delBtn) delBtn.onclick = async () => {
+    close();
+    if (await confirmDialog({ title: 'Delete this room?', message: `“${r.name}” disappears for everyone in it. Films and takes are gone for good.`, confirmText: 'Delete room', danger: true }))
+      await S.deleteRoom(r.id);
+  };
+}
+
 function searchSheet(onPick) {
   const body = openSheet('Add a film', `
     ${field('q', 'Search films', 'text', 'Type a title…')}
@@ -529,7 +611,7 @@ function rateSheet(film, { onSave, onDelete } = {}) {
     <div class="field mt"><label>Your take (optional)</label>
       <textarea class="input" id="review" placeholder="What did you think?">${esc(film.review || '')}</textarea></div>
     <button class="btn primary block" id="save">Save</button>
-    ${onDelete ? `<button class="btn ghost block mt" id="del">Remove from diary</button>` : ''}`);
+    ${onDelete ? `<button class="btn ghost block mt" id="del">Remove film</button>` : ''}`);
   const holder = document.getElementById('starHolder');
   const label = document.getElementById('rlabel');
   let rating = film.rating || 0;
