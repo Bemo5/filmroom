@@ -115,6 +115,7 @@ export function deleteRoom(roomId) { return deleteDoc(doc(db, 'rooms', roomId));
 export async function addFilmToRoom(roomId, film, user) {
   await setDoc(doc(db, 'rooms', roomId, 'films', String(film.tmdbId)), {
     tmdbId: film.tmdbId, title: film.title, year: film.year, posterPath: film.posterPath,
+    director: film.director || '',
     addedBy: user.uid, addedByName: user.displayName || user.email,
     addedAt: serverTimestamp(),
   }, { merge: true });
@@ -139,7 +140,8 @@ export async function saveTake(roomId, roomName, film, user, rating, review) {
   // take still saves and My Films just won't reflect it until they are.
   try {
     await setDoc(doc(db, 'users', user.uid, 'roomReviews', `${roomId}_${filmId}`), {
-      roomId, roomName, tmdbId: film.tmdbId, title: film.title, year: film.year, posterPath: film.posterPath || null,
+      roomId, roomName, tmdbId: film.tmdbId, title: film.title, year: film.year,
+      posterPath: film.posterPath || null, director: film.director || '',
       rating, review: review || '', updatedAt: serverTimestamp(),
     }, { merge: true });
   } catch (e) { /* roomReviews rules not published yet */ }
@@ -147,6 +149,9 @@ export async function saveTake(roomId, roomName, film, user, rating, review) {
 export function watchRoomReviews(uid, cb) {
   const q = query(collection(db, 'users', uid, 'roomReviews'), orderBy('updatedAt', 'desc'));
   return onSnapshot(q, (s) => cb(s.docs.map((d) => ({ id: d.id, ...d.data() }))), () => {});
+}
+export function deleteRoomReview(uid, id) {
+  return deleteDoc(doc(db, 'users', uid, 'roomReviews', id));
 }
 
 // ---------- Personal diary ----------
@@ -161,6 +166,7 @@ export async function diaryRatings(uid) {
 export function saveDiaryEntry(uid, film, rating, review) {
   return setDoc(doc(db, 'users', uid, 'diary', String(film.tmdbId)), {
     tmdbId: film.tmdbId, title: film.title, year: film.year, posterPath: film.posterPath,
+    director: film.director || '',
     rating, review: review || '', updatedAt: serverTimestamp(),
   }, { merge: true });
 }

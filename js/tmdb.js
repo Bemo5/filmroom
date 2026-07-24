@@ -31,3 +31,12 @@ export async function searchFilms(query) {
       overview: m.overview || '',
     }));
 }
+
+// The film's director (best-effort; '' if unavailable).
+export async function filmDirector(tmdbId) {
+  try {
+    const d = await tmdb(`/movie/${tmdbId}`, { append_to_response: 'credits' });
+    const dir = (d.credits?.crew || []).find((c) => c.job === 'Director');
+    return dir ? dir.name : '';
+  } catch { return ''; }
+}

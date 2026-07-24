@@ -4,7 +4,7 @@
 const _V = new URL(import.meta.url).search;
 const { isConfigured } = await import('./config.js' + _V);
 const { starRow, starInput, ratingInline, ratingColor, ratingLabel, formatRating } = await import('./stars.js' + _V);
-const { IMG, searchFilms } = await import('./tmdb.js' + _V);
+const { IMG, searchFilms, filmDirector } = await import('./tmdb.js' + _V);
 const S = await import('./store.js' + _V);
 
 const app = document.getElementById('app');
@@ -31,6 +31,15 @@ const THEMES = [
   { id: 'ocean',   name: 'Midnight' },
 ];
 const applyTheme = (theme) => { document.documentElement.dataset.theme = theme || 'gold'; };
+
+// Sort options for film lists.
+const ROOM_SORTS = [['recent', 'Recently added'], ['rating', 'Avg rating'], ['title', 'Title A–Z'], ['year', 'Year (new)'], ['director', 'Director']];
+const DIARY_SORTS = [['recent', 'Recent'], ['rating_desc', 'Rating high→low'], ['rating_asc', 'Rating low→high'], ['director', 'Director'], ['title', 'Title A–Z'], ['year', 'Year (new)']];
+let roomSort = 'recent';
+let diarySort = 'recent';
+const sortSelect = (id, opts, cur) =>
+  `<select class="sort-select" id="${id}">${opts.map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+const dirMeta = (d) => (d ? `<span class="dir">dir. ${esc(d)}</span>` : '');
 
 // ---------------------------------------------------------------- boot
 if (!isConfigured) {
@@ -231,6 +240,8 @@ function newRoomSheet() {
 // ---------------------------------------------------------------- room detail
 async function viewRoom(roomId) {
   roomTakes = {};
+  let roomFilms = [];
+  const subscribed = new Set();
   const room = await S.getRoom(roomId);
   if (!room) { location.hash = '#/rooms'; return; }
   const isOwner = room.createdBy === me.uid;
@@ -246,32 +257,59 @@ async function viewRoom(roomId) {
       </div>
     </div>
     <button class="btn primary block" id="add">＋ Add a film</button>
+    <div class="row-between mt"><span class="section-title" style="margin:0">Films</span>${sortSelect('roomSort', ROOM_SORTS, roomSort)}</div>
     <div id="films" class="list mt"><div class="empty"><span class="spinner"></span></div></div>`);
   document.getElementById('add').onclick = () => searchSheet((film) => S.addFilmToRoom(roomId, film, me));
   const mng = document.getElementById('manage');
   if (mng) mng.onclick = () => manageRoomSheet(room, isAdmin);
+  document.getElementById('roomSort').onchange = (e) => { roomSort = e.target.value; renderFilms(); };
 
-  subs.push(S.watchRoomFilms(roomId, (films) => {
+  const avgOf = (fid) => {
+    const v = (roomTakes[fid] || []).filter((t) => !(usersById[t.uid]?.status === 'revoked' && cfg.hideRevokedTakes));
+    return v.length ? v.reduce((s, t) => s + t.rating, 0) / v.length : null;
+  };
+  const takeHTML = (t) => {
+    const u = usersById[t.uid];
+    const removed = u && u.status === 'revoked';
+    if (removed && cfg.hideRevokedTakes) return '';
+    const name = removed ? '[removed user]' : esc((u && u.name) || t.name || 'Someone');
+    return `<div class="take"><div class="who">
+        <span class="name ${removed ? 'removed' : ''}">${name}</span>
+        <span class="rating-inline">${ratingInline(t.rating, 13)}</span></div>
+      ${t.review ? `<div class="body">${esc(t.review)}</div>` : ''}</div>`;
+  };
+  const sortFilms = (list) => {
+    const a = [...list];
+    if (roomSort === 'rating') a.sort((x, y) => (avgOf(y.id) ?? -1) - (avgOf(x.id) ?? -1));
+    else if (roomSort === 'title') a.sort((x, y) => (x.title || '').localeCompare(y.title || ''));
+    else if (roomSort === 'year') a.sort((x, y) => (+y.year || 0) - (+x.year || 0));
+    else if (roomSort === 'director') a.sort((x, y) => (x.director || '~').localeCompare(y.director || '~'));
+    else a.sort((x, y) => (y.addedAt?.seconds || 0) - (x.addedAt?.seconds || 0));
+    return a;
+  };
+  const renderFilms = () => {
     const box = document.getElementById('films');
     if (!box) return;
-    if (!films.length) {
-      box.innerHTML = `<div class="empty"><div class="ico">🎞️</div>No films yet.<br>Add one to start rating.</div>`;
-      return;
-    }
-    box.innerHTML = films.map((f) => `
-      <div class="card">
-        <div class="film">
-          ${posterEl(f.posterPath)}
-          <div class="info">
-            <div class="title">${esc(f.title)}</div>
-            <div class="film-meta"><span class="year-pill">${esc(f.year || '—')}</span><span class="avg" id="avg-${f.id}"></span></div>
-            <div class="mt"><button class="btn outline sm" id="rate-${f.id}" data-rate="${f.id}">★ Add your rating</button></div>
-            <div class="takes" id="takes-${f.id}"><div class="faint" style="font-size:13px;margin-top:12px">Loading…</div></div>
-          </div>
-        </div>
-      </div>`).join('');
+    if (!roomFilms.length) { box.innerHTML = `<div class="empty"><div class="ico">🎞️</div><b>No films yet.</b><br>Add one to start rating.</div>`; return; }
+    box.innerHTML = sortFilms(roomFilms).map((f) => {
+      const takes = roomTakes[f.id] || [];
+      const mine = takes.find((t) => t.uid === me.uid);
+      const avg = avgOf(f.id);
+      const takesHTML = takes.length
+        ? takes.slice().sort((a, b) => b.rating - a.rating).map(takeHTML).join('') || `<div class="faint" style="font-size:13px;margin-top:10px">No visible takes.</div>`
+        : `<div class="faint" style="font-size:13px;margin-top:10px">No takes yet.</div>`;
+      return `<div class="card"><div class="film">
+        ${posterEl(f.posterPath)}
+        <div class="info">
+          <div class="title">${esc(f.title)}</div>
+          <div class="film-meta"><span class="year-pill">${esc(f.year || '—')}</span>${dirMeta(f.director)}
+            ${avg != null ? `<span class="avg"><span style="color:${ratingColor(avg)};font-weight:800">${avg.toFixed(1)}</span> avg</span>` : ''}</div>
+          <div class="mt"><button class="btn outline sm" data-rate="${f.id}">${mine ? `★ You: ${formatRating(mine.rating)} / 10 · edit` : '★ Add your rating'}</button></div>
+          <div class="takes">${takesHTML}</div>
+        </div></div></div>`;
+    }).join('');
     box.querySelectorAll('[data-rate]').forEach((b) => {
-      const f = films.find((x) => x.id === b.dataset.rate);
+      const f = roomFilms.find((x) => x.id === b.dataset.rate);
       b.onclick = () => {
         const mine = (roomTakes[f.id] || []).find((t) => t.uid === me.uid);
         rateSheet({ ...f, rating: mine ? mine.rating : 0, review: mine ? mine.review : '' }, {
@@ -279,46 +317,17 @@ async function viewRoom(roomId) {
         });
       };
     });
-    films.forEach((f) => subs.push(S.watchFilmTakes(roomId, f.id, (takes) => renderTakes(f.id, takes))));
-  }));
-}
+  };
 
-function renderTakes(filmId, takes) {
-  roomTakes[filmId] = takes;
-  const box = document.getElementById('takes-' + filmId);
-  if (!box) return;
-  // Reflect the current user's own rating on the button label.
-  const rb = document.getElementById('rate-' + filmId);
-  if (rb) {
-    const mine = takes.find((t) => t.uid === me.uid);
-    rb.textContent = mine ? `★ You: ${formatRating(mine.rating)} / 10 · edit` : '★ Add your rating';
-  }
-  // Average across all members (respecting the hide-revoked setting).
-  const avgEl = document.getElementById('avg-' + filmId);
-  if (avgEl) {
-    const visible = takes.filter((t) => !(usersById[t.uid]?.status === 'revoked' && cfg.hideRevokedTakes));
-    if (visible.length) {
-      const a = visible.reduce((s, t) => s + t.rating, 0) / visible.length;
-      avgEl.innerHTML = `<span style="color:${ratingColor(a)};font-weight:800">${a.toFixed(1)}</span> avg · ${visible.length} rating${visible.length === 1 ? '' : 's'}`;
-    } else avgEl.textContent = 'No ratings yet';
-  }
-  if (!takes.length) { box.innerHTML = `<div class="faint" style="font-size:13px;margin-top:10px">No takes yet.</div>`; return; }
-  box.innerHTML = takes
-    .sort((a, b) => b.rating - a.rating)
-    .map((t) => {
-      const u = usersById[t.uid];
-      const removed = u && u.status === 'revoked';
-      if (removed && cfg.hideRevokedTakes) return '';
-      // Prefer the live name so admin renames reflect on old takes too.
-      const name = removed ? '[removed user]' : esc((u && u.name) || t.name || 'Someone');
-      return `<div class="take">
-        <div class="who">
-          <span class="name ${removed ? 'removed' : ''}">${name}</span>
-          <span class="rating-inline">${ratingInline(t.rating, 13)}</span>
-        </div>
-        ${t.review ? `<div class="body">${esc(t.review)}</div>` : ''}
-      </div>`;
-    }).join('') || `<div class="faint" style="font-size:13px;margin-top:10px">No visible takes.</div>`;
+  subs.push(S.watchRoomFilms(roomId, (films) => {
+    roomFilms = films;
+    films.forEach((f) => {
+      if (subscribed.has(f.id)) return;
+      subscribed.add(f.id);
+      subs.push(S.watchFilmTakes(roomId, f.id, (takes) => { roomTakes[f.id] = takes; renderFilms(); }));
+    });
+    renderFilms();
+  }));
 }
 
 async function manageRoomSheet(room, isAdmin) {
@@ -367,14 +376,8 @@ async function manageRoomSheet(room, isAdmin) {
 }
 
 // ---------------------------------------------------------------- diary
-function viewDiary() {
-  shell(`
-    <div class="page-head row-between">
-      <div><h1>My Films</h1><p class="subtitle" id="diaryStat">Every film you've rated.</p></div>
-      <button class="btn primary sm" id="add">Add film</button>
-    </div>
-    <div id="diary"><div class="empty"><span class="spinner"></span></div></div>`);
-  const openEntry = (e) => rateSheet(e, {
+function openEntry(e) {
+  rateSheet(e, {
     onSave: (rating, review) => S.saveDiaryEntry(me.uid, e, rating, review),
     onDelete: async () => {
       if (await confirmDialog({ title: 'Remove this film?', message: 'Deletes your rating and take from My Films.', confirmText: 'Remove', danger: true })) {
@@ -382,28 +385,97 @@ function viewDiary() {
       }
     },
   });
+}
+
+// Action popup for a My Films card (also opens on long-press).
+async function filmItemDialog(i) {
+  const rows = [];
+  if (i.kind === 'personal') {
+    rows.push(`<button class="btn block" data-act="edit">Edit rating</button>`);
+    rows.push(`<button class="btn danger block" data-act="del">Remove from My Films</button>`);
+  } else {
+    const exists = await S.getRoom(i.roomId).catch(() => null);
+    if (exists) {
+      rows.push(`<button class="btn block" data-act="editroom">Edit rating</button>`);
+      rows.push(`<button class="btn block" data-act="open">Open room</button>`);
+    }
+    rows.push(`<button class="btn danger block" data-act="delroom">Remove from My Films</button>`);
+  }
+  const ov = modal(`
+    <div class="u-name" style="font-size:19px">${esc(i.title)}</div>
+    <div class="dialog-sub">${i.kind === 'room' ? 'In ' + esc(i.roomName || 'a room') : 'My Films'}${i.director ? ' · dir. ' + esc(i.director) : ''}</div>
+    <div class="dialog-list">${rows.join('')}</div>
+    <button class="btn ghost block mt" data-x>Close</button>`);
+  const close = () => ov.remove();
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  ov.querySelector('[data-x]').onclick = close;
+  ov.querySelectorAll('[data-act]').forEach((b) => b.onclick = async () => {
+    const act = b.dataset.act;
+    if (act === 'edit') { close(); openEntry(i); }
+    else if (act === 'open') { close(); location.hash = '#/room/' + i.roomId; }
+    else if (act === 'editroom') {
+      close();
+      rateSheet(i, { onSave: async (rating, review) => { await S.saveTake(i.roomId, i.roomName, i, me, rating, review); } });
+    } else if (act === 'del' || act === 'delroom') {
+      if (await confirmDialog({ title: 'Remove this film?', message: act === 'del' ? 'Deletes your rating and take.' : 'Removes this room review from My Films. Your rating in the room stays.', confirmText: 'Remove', danger: true })) {
+        if (act === 'del') await S.deleteDiaryEntry(me.uid, i.tmdbId);
+        else await S.deleteRoomReview(me.uid, i.id);
+      }
+      close();
+    }
+  });
+}
+
+function viewDiary() {
+  shell(`
+    <div class="page-head row-between">
+      <div><h1>My Films</h1><p class="subtitle" id="diaryStat">Every film you've rated.</p></div>
+      <button class="btn primary sm" id="add">Add film</button>
+    </div>
+    <div class="row-between"><span class="section-title" style="margin:0">Films · hold to edit</span>${sortSelect('diarySort', DIARY_SORTS, diarySort)}</div>
+    <div id="diaryDirs"></div>
+    <div id="diary" class="mt"><div class="empty"><span class="spinner"></span></div></div>`);
   document.getElementById('add').onclick = () => searchSheet((film) =>
     rateSheet(film, { onSave: (rating, review) => S.saveDiaryEntry(me.uid, film, rating, review) }));
+  document.getElementById('diarySort').onchange = (e) => { diarySort = e.target.value; render(); };
 
-  // Merge personal diary entries with reviews you left in rooms (each tagged).
   let diary = [], roomReviews = [];
+  const sortItems = (items) => {
+    const a = [...items];
+    if (diarySort === 'rating_desc') a.sort((x, y) => y.rating - x.rating);
+    else if (diarySort === 'rating_asc') a.sort((x, y) => x.rating - y.rating);
+    else if (diarySort === 'title') a.sort((x, y) => (x.title || '').localeCompare(y.title || ''));
+    else if (diarySort === 'year') a.sort((x, y) => (+y.year || 0) - (+x.year || 0));
+    else if (diarySort === 'director') a.sort((x, y) => (x.director || '~').localeCompare(y.director || '~'));
+    else a.sort((x, y) => y.ts - x.ts);
+    return a;
+  };
   const render = () => {
     const box = document.getElementById('diary');
     if (!box) return;
-    const items = [
+    const items = sortItems([
       ...diary.map((e) => ({ ...e, kind: 'personal', ts: e.updatedAt?.seconds || 0 })),
       ...roomReviews.map((r) => ({ ...r, kind: 'room', ts: r.updatedAt?.seconds || 0 })),
-    ].sort((a, b) => b.ts - a.ts);
+    ]);
+    const stat = document.getElementById('diaryStat');
+    const dirs = document.getElementById('diaryDirs');
     if (!items.length) {
       box.innerHTML = `<div class="empty"><div class="ico">🎞️</div><b>No films yet.</b><br>Add a film, or rate one in a room.</div>`;
-      const stat = document.getElementById('diaryStat');
       if (stat) stat.textContent = 'Every film you’ve rated — here and in rooms.';
+      if (dirs) dirs.innerHTML = '';
       return;
     }
     const shelf = items.map((i) => i.rating);
     const avg = shelf.reduce((s, r) => s + r, 0) / shelf.length;
-    const stat = document.getElementById('diaryStat');
     if (stat) stat.innerHTML = `${items.length} rating${items.length === 1 ? '' : 's'} · <span style="color:${ratingColor(avg)};font-weight:700">${avg.toFixed(1)}</span> average`;
+    // Most-watched directors.
+    const counts = {};
+    items.forEach((i) => { if (i.director) counts[i.director] = (counts[i.director] || 0) + 1; });
+    const top = Object.entries(counts).filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    if (dirs) dirs.innerHTML = top.length
+      ? `<div class="card" style="padding:13px 15px"><div class="section-title" style="margin:0 0 10px">Most-watched directors</div>
+          <div class="dir-chips">${top.map(([n, c]) => `<span class="dir-chip">${esc(n)} <b>${c}</b></span>`).join('')}</div></div>`
+      : '';
     box.innerHTML = `<div class="list">${items.map((i, idx) => {
       const tag = i.kind === 'room'
         ? `<span class="src-tag room">In ${esc(i.roomName || 'a room')}</span>`
@@ -412,16 +484,15 @@ function viewDiary() {
         ${posterEl(i.posterPath)}
         <div class="info">
           <div class="title">${esc(i.title)}</div>
-          <div class="film-meta"><span class="year-pill">${esc(i.year || '—')}</span>${tag}</div>
+          <div class="film-meta"><span class="year-pill">${esc(i.year || '—')}</span>${dirMeta(i.director)}${tag}</div>
           <div class="rating-inline mt">${ratingInline(i.rating, 15)}
             <span class="faint" style="font-size:12.5px">· ${ratingLabel(i.rating, shelf)}</span></div>
           ${i.review ? `<div class="body" style="margin-top:8px">${esc(i.review)}</div>` : ''}
         </div></div></div>`;
     }).join('')}</div>`;
-    box.querySelectorAll('[data-idx]').forEach((el) => el.onclick = () => {
+    box.querySelectorAll('[data-idx]').forEach((el) => {
       const i = items[+el.dataset.idx];
-      if (i.kind === 'room') location.hash = '#/room/' + i.roomId;
-      else openEntry(i);
+      bindHold(el, () => { if (i.kind === 'room') location.hash = '#/room/' + i.roomId; else openEntry(i); }, () => filmItemDialog(i));
     });
   };
   subs.push(S.watchDiary(me.uid, (e) => { diary = e; render(); }));
@@ -686,8 +757,11 @@ function searchSheet(onPick) {
               ${posterEl(f.posterPath)}
               <div><div class="title">${esc(f.title)}</div><div class="year">${esc(f.year)}</div></div></div>`).join('')
           : `<div class="faint" style="font-size:13px">No matches.</div>`;
-        results.querySelectorAll('[data-i]').forEach((r) => r.onclick = () => {
-          closeSheet(); onPick(films[r.dataset.i]);
+        results.querySelectorAll('[data-i]').forEach((r) => r.onclick = async () => {
+          const film = films[r.dataset.i];
+          closeSheet();
+          film.director = await filmDirector(film.tmdbId); // enrich with director
+          onPick(film);
         });
       } catch (e) {
         results.innerHTML = `<div class="notice err">Search failed — check your TMDB token. (${esc(e.message)})</div>`;
