@@ -16,13 +16,14 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
 const clearSubs = () => { subs.forEach((u) => u && u()); subs = []; };
 const posterEl = (path, cls = 'poster') =>
   path ? `<img class="${cls}" src="${IMG(path)}" alt="" loading="lazy">` : `<div class="${cls} ph">🎞️</div>`;
+const brand = () => `<div class="brand"><img class="brand-mark" src="assets/logo.svg" alt=""><span class="wm">Filmroom</span></div>`;
 
 // ---------------------------------------------------------------- boot
 if (!isConfigured) {
   app.innerHTML = `<div class="auth-wrap"><div class="card auth-card">
-    <div class="brand">Film<span class="dot">room</span></div>
-    <p class="auth-sub">Almost there</p>
-    <div class="notice info">This install isn't configured yet. Open <b>js/config.js</b> and paste your Firebase config + TMDB token, then reload.</div>
+    ${brand()}
+    <div class="titlecard-rule"></div>
+    <div class="notice info">Not configured yet. Open <b>js/config.js</b>, paste your Firebase config and TMDB token, then reload.</div>
     <p class="faint" style="font-size:13px">See <b>README.md</b> → Setup for the exact steps.</p>
   </div></div>`;
 } else {
@@ -55,8 +56,13 @@ if (!isConfigured) {
 let authMode = 'login';
 function renderAuth() {
   app.innerHTML = `<div class="auth-wrap"><div class="card auth-card">
-    <div class="brand">Film<span class="dot">room</span></div>
-    <p class="auth-sub">${authMode === 'login' ? 'Welcome back' : 'Request an account'}</p>
+    ${brand()}
+    <div class="titlecard-rule"></div>
+    <div class="eyebrow auth-eyebrow">Members only · Est. 2026</div>
+    <div class="auth-headline">${authMode === 'login' ? 'Take your seat' : 'Join the club'}</div>
+    <p class="auth-sub">${authMode === 'login'
+      ? 'Log in to your rooms and diary.'
+      : 'Request an account — the admin lets you in.'}</p>
     <div id="msg"></div>
     ${authMode === 'signup' ? field('name', 'Name', 'text', 'What your friends call you') : ''}
     ${field('email', 'Email', 'email', 'you@email.com')}
@@ -111,9 +117,10 @@ function renderGate(kind) {
   const body = kind === 'pending'
     ? { t: 'Waiting for approval', s: 'Your request is in. The admin will approve you soon — check back shortly.' }
     : { t: 'Access removed', s: 'Your access to Filmroom has been revoked. Reach out to the admin if you think this is a mistake.' };
-  app.innerHTML = `<div class="auth-wrap"><div class="card auth-card" style="text-align:center">
-    <div class="brand">Film<span class="dot">room</span></div>
-    <div style="font-size:40px;margin:16px 0 8px">${kind === 'pending' ? '⏳' : '🚫'}</div>
+  app.innerHTML = `<div class="auth-wrap"><div class="card auth-card">
+    ${brand()}
+    <div class="titlecard-rule"></div>
+    <div style="font-size:40px;margin:8px 0 10px">${kind === 'pending' ? '⏳' : '🚫'}</div>
     <h2>${body.t}</h2><p class="auth-sub mt">${body.s}</p>
     <button class="btn ghost block mt" id="out">Log out</button>
   </div></div>`;
@@ -129,7 +136,7 @@ function shell(inner) {
       <span class="ico">${ico}</span>${label}</button>`;
   app.innerHTML = `
     <div class="topbar">
-      <div class="brand">Film<span class="dot">room</span></div>
+      ${brand()}
       <div class="spacer"></div>
       ${isAdmin ? '<span class="badge admin">admin</span>' : ''}
       <button class="btn ghost sm" id="logout">Log out</button>
