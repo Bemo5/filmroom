@@ -55,6 +55,17 @@ export function setUserRole(uid, role) {
 export function renameUser(uid, name) {
   return updateDoc(doc(db, 'users', uid), { name });
 }
+export function deleteUser(uid) {
+  return deleteDoc(doc(db, 'users', uid));
+}
+export function setUserVisibility(uid, visibleTo) {
+  return updateDoc(doc(db, 'users', uid), { visibleTo });
+}
+// Live subscription to one user's own doc — used so a pending user auto-advances
+// the instant an admin approves them (no manual refresh).
+export function watchProfile(uid, cb) {
+  return onSnapshot(doc(db, 'users', uid), (s) => cb(s.exists() ? { uid, ...s.data() } : null));
+}
 
 export async function getAppConfig() {
   const snap = await getDoc(doc(db, 'config', 'app'));
@@ -77,6 +88,10 @@ export async function createRoom(name, emoji, user) {
 export function watchMyRooms(uid, cb) {
   const q = query(collection(db, 'rooms'), where('members', 'array-contains', uid));
   return onSnapshot(q, (s) => cb(s.docs.map((d) => ({ id: d.id, ...d.data() }))));
+}
+// Admin sees every room (they are effectively in all of them).
+export function watchAllRooms(cb, onErr) {
+  return onSnapshot(collection(db, 'rooms'), (s) => cb(s.docs.map((d) => ({ id: d.id, ...d.data() }))), onErr || (() => {}));
 }
 export async function getRoom(id) {
   const snap = await getDoc(doc(db, 'rooms', id));
@@ -106,12 +121,26 @@ export function watchFilmTakes(roomId, filmId, cb) {
   const c = collection(db, 'rooms', roomId, 'films', filmId, 'takes');
   return onSnapshot(c, (s) => cb(s.docs.map((d) => ({ uid: d.id, ...d.data() }))));
 }
-export function saveTake(roomId, filmId, user, rating, review) {
-  return setDoc(doc(db, 'rooms', roomId, 'films', filmId, 'takes', user.uid), {
+export async function saveTake(roomId, roomName, film, user, rating, review) {
+  const filmId = String(film.tmdbId);
+  await setDoc(doc(db, 'rooms', roomId, 'films', filmId, 'takes', user.uid), {
     rating, review: review || '',
     name: user.displayName || user.email,
     updatedAt: serverTimestamp(),
   }, { merge: true });
+  // Mirror into the user's own "room reviews" so My Films can show it, tagged by
+  // room. Non-fatal: if the rules for this collection aren't published yet, the
+  // take still saves and My Films just won't reflect it until they are.
+  try {
+    await setDoc(doc(db, 'users', user.uid, 'roomReviews', `${roomId}_${filmId}`), {
+      roomId, roomName, tmdbId: film.tmdbId, title: film.title, year: film.year, posterPath: film.posterPath || null,
+      rating, review: review || '', updatedAt: serverTimestamp(),
+    }, { merge: true });
+  } catch (e) { /* roomReviews rules not published yet */ }
+}
+export function watchRoomReviews(uid, cb) {
+  const q = query(collection(db, 'users', uid, 'roomReviews'), orderBy('updatedAt', 'desc'));
+  return onSnapshot(q, (s) => cb(s.docs.map((d) => ({ id: d.id, ...d.data() }))), () => {});
 }
 
 // ---------- Personal diary ----------

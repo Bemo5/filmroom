@@ -10,6 +10,8 @@ let profile = null;   // users/{uid} doc
 let cfg = { hideRevokedTakes: false };
 let usersById = {};   // uid -> profile (for status lookup on takes)
 let subs = [];        // active onSnapshot unsubscribers
+let statusWatch = null; // live watcher on our own user doc (pending/revoked gates)
+let roomTakes = {};   // filmId -> takes[] for the open room (for edit prefill)
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -48,8 +50,14 @@ if (!isConfigured) {
       profile = await S.getProfile(user.uid);
     }
     if (!profile) { profile = { status: 'pending' }; }
-    if (profile.status === 'pending') return renderGate('pending');
-    if (profile.status === 'revoked') return renderGate('revoked');
+    if (profile.status !== 'approved') {
+      renderGate(profile.status === 'revoked' ? 'revoked' : 'pending');
+      // Live-watch our own doc so approval (or restore) advances us automatically.
+      if (statusWatch) statusWatch();
+      const from = profile.status;
+      statusWatch = S.watchProfile(user.uid, (p) => { if (!p || p.status !== from) location.reload(); });
+      return;
+    }
     cfg = await S.getAppConfig();
     applyTheme(cfg.theme);
     try {
@@ -178,7 +186,10 @@ function viewRooms() {
     </div>
     <div id="rooms" class="list"><div class="empty"><span class="spinner"></span></div></div>`);
   document.getElementById('new').onclick = newRoomSheet;
-  subs.push(S.watchMyRooms(me.uid, (rooms) => {
+  const watchRooms = profile.role === 'admin'
+    ? (cb) => S.watchAllRooms(cb, () => subs.push(S.watchMyRooms(me.uid, cb))) // fallback if rules unpublished
+    : (cb) => S.watchMyRooms(me.uid, cb);
+  subs.push(watchRooms((rooms) => {
     const box = document.getElementById('rooms');
     if (!box) return;
     if (!rooms.length) {
@@ -214,6 +225,7 @@ function newRoomSheet() {
 
 // ---------------------------------------------------------------- room detail
 async function viewRoom(roomId) {
+  roomTakes = {};
   const room = await S.getRoom(roomId);
   if (!room) { location.hash = '#/rooms'; return; }
   const isOwner = room.createdBy === me.uid;
@@ -248,24 +260,34 @@ async function viewRoom(roomId) {
           <div class="info">
             <div class="title">${esc(f.title)}</div>
             <div class="film-meta"><span class="year-pill">${esc(f.year || '—')}</span><span class="avg" id="avg-${f.id}"></span></div>
-            <div class="mt"><button class="btn outline sm" data-rate="${f.id}">★ Your rating</button></div>
+            <div class="mt"><button class="btn outline sm" id="rate-${f.id}" data-rate="${f.id}">★ Add your rating</button></div>
             <div class="takes" id="takes-${f.id}"><div class="faint" style="font-size:13px;margin-top:12px">Loading…</div></div>
           </div>
         </div>
       </div>`).join('');
     box.querySelectorAll('[data-rate]').forEach((b) => {
       const f = films.find((x) => x.id === b.dataset.rate);
-      b.onclick = () => rateSheet(f, { onSave: async (rating, review) => {
-        await S.saveTake(roomId, f.id, me, rating, review);
-      } });
+      b.onclick = () => {
+        const mine = (roomTakes[f.id] || []).find((t) => t.uid === me.uid);
+        rateSheet({ ...f, rating: mine ? mine.rating : 0, review: mine ? mine.review : '' }, {
+          onSave: async (rating, review) => { await S.saveTake(roomId, room.name, f, me, rating, review); },
+        });
+      };
     });
     films.forEach((f) => subs.push(S.watchFilmTakes(roomId, f.id, (takes) => renderTakes(f.id, takes))));
   }));
 }
 
 function renderTakes(filmId, takes) {
+  roomTakes[filmId] = takes;
   const box = document.getElementById('takes-' + filmId);
   if (!box) return;
+  // Reflect the current user's own rating on the button label.
+  const rb = document.getElementById('rate-' + filmId);
+  if (rb) {
+    const mine = takes.find((t) => t.uid === me.uid);
+    rb.textContent = mine ? `★ You: ${formatRating(mine.rating)} / 10 · edit` : '★ Add your rating';
+  }
   // Average across all members (respecting the hide-revoked setting).
   const avgEl = document.getElementById('avg-' + filmId);
   if (avgEl) {
@@ -282,7 +304,8 @@ function renderTakes(filmId, takes) {
       const u = usersById[t.uid];
       const removed = u && u.status === 'revoked';
       if (removed && cfg.hideRevokedTakes) return '';
-      const name = removed ? '[removed user]' : esc(t.name || (u && u.name) || 'Someone');
+      // Prefer the live name so admin renames reflect on old takes too.
+      const name = removed ? '[removed user]' : esc((u && u.name) || t.name || 'Someone');
       return `<div class="take">
         <div class="who">
           <span class="name ${removed ? 'removed' : ''}">${name}</span>
@@ -296,32 +319,46 @@ function renderTakes(filmId, takes) {
 async function manageRoomSheet(room, isAdmin) {
   const users = await S.allUsers();
   usersById = Object.fromEntries(users.map((u) => [u.uid, u]));
-  const inRoom = new Set(room.members);
   const approved = users.filter((u) => u.status === 'approved');
-  openSheet('Manage room', `
-    <div class="section-title">Members</div>
-    <div class="list" id="mem"></div>
-    <div class="section-title">Add people</div>
-    <div class="list" id="add"></div>
-    ${isAdmin ? `<button class="btn danger block mt" id="del">Delete room</button>` : ''}`);
-  const mem = document.getElementById('mem');
-  mem.innerHTML = approved.filter((u) => inRoom.has(u.uid)).map((u) =>
-    `<div class="card row-between"><span>${esc(u.name)}${u.uid === room.createdBy ? ' <span class="faint">· owner</span>' : ''}</span>
-      ${u.uid !== room.createdBy ? `<button class="btn ghost sm" data-rm="${u.uid}">Remove</button>` : ''}</div>`).join('');
-  const add = document.getElementById('add');
-  const outside = approved.filter((u) => !inRoom.has(u.uid));
-  add.innerHTML = outside.length
-    ? outside.map((u) => `<div class="card row-between"><span>${esc(u.name)}</span>
-        <button class="btn sm" data-add="${u.uid}">Add</button></div>`).join('')
-    : `<div class="faint" style="font-size:13px">Everyone approved is already in.</div>`;
-  add.querySelectorAll('[data-add]').forEach((b) => b.onclick = async () => { await S.addMember(room.id, b.dataset.add); closeSheet(); route(); });
-  mem.querySelectorAll('[data-rm]').forEach((b) => b.onclick = async () => { await S.removeMember(room.id, b.dataset.rm); closeSheet(); route(); });
-  const del = document.getElementById('del');
-  if (del) del.onclick = async () => {
-    if (await confirmDialog({ title: 'Delete this room?', message: 'It disappears for everyone in it. Films and takes are gone for good.', confirmText: 'Delete room', danger: true })) {
-      await S.deleteRoom(room.id); closeSheet(); location.hash = '#/rooms';
-    }
+  const members = new Set(room.members);
+  // If the admin limited who *I* can see, only offer those people to add.
+  const limit = (!isAdmin && Array.isArray(profile.visibleTo) && profile.visibleTo.length) ? new Set(profile.visibleTo) : null;
+
+  const body = openSheet(`Manage · ${room.name}`, '');
+  const render = () => {
+    const inRoom = approved.filter((u) => members.has(u.uid));
+    const outside = approved.filter((u) => !members.has(u.uid) && (!limit || limit.has(u.uid)));
+    body.innerHTML = `
+      <div class="section-title">Members (${inRoom.length})</div>
+      <div class="list">${inRoom.map((u) => {
+        const owner = u.uid === room.createdBy;
+        // Owners and admins can't be removed by anyone; admin can remove others.
+        const canRemove = !owner && u.role !== 'admin' && (isAdmin || room.createdBy === me.uid);
+        return `<div class="card row-between">
+          <span class="u-name">${esc(u.name)}${owner ? ' <span class="faint" style="font-weight:500">· owner</span>' : ''}${u.role === 'admin' ? ' <span class="badge admin">admin</span>' : ''}</span>
+          ${canRemove ? `<button class="btn ghost sm" data-rm="${u.uid}">Remove</button>` : ''}</div>`;
+      }).join('')}</div>
+      <div class="section-title">Add people</div>
+      <div class="list">${outside.length
+        ? outside.map((u) => `<div class="card row-between"><span class="u-name">${esc(u.name)}</span>
+            <button class="btn sm" data-add="${u.uid}">Add</button></div>`).join('')
+        : `<div class="faint" style="font-size:13px">${limit ? 'No one else is available to you.' : 'Everyone approved is already in.'}</div>`}</div>
+      ${(isAdmin || room.createdBy === me.uid) ? `<button class="btn danger block mt" id="del">Delete room</button>` : ''}`;
+
+    body.querySelectorAll('[data-add]').forEach((b) => b.onclick = async () => {
+      b.disabled = true; await S.addMember(room.id, b.dataset.add); members.add(b.dataset.add); render();
+    });
+    body.querySelectorAll('[data-rm]').forEach((b) => b.onclick = async () => {
+      b.disabled = true; await S.removeMember(room.id, b.dataset.rm); members.delete(b.dataset.rm); render();
+    });
+    const del = body.querySelector('#del');
+    if (del) del.onclick = async () => {
+      if (await confirmDialog({ title: 'Delete this room?', message: 'It disappears for everyone in it. Films and takes are gone for good.', confirmText: 'Delete room', danger: true })) {
+        await S.deleteRoom(room.id); closeSheet(); location.hash = '#/rooms';
+      }
+    };
   };
+  render();
 }
 
 // ---------------------------------------------------------------- diary
@@ -342,30 +379,48 @@ function viewDiary() {
   });
   document.getElementById('add').onclick = () => searchSheet((film) =>
     rateSheet(film, { onSave: (rating, review) => S.saveDiaryEntry(me.uid, film, rating, review) }));
-  subs.push(S.watchDiary(me.uid, (entries) => {
+
+  // Merge personal diary entries with reviews you left in rooms (each tagged).
+  let diary = [], roomReviews = [];
+  const render = () => {
     const box = document.getElementById('diary');
     if (!box) return;
-    if (!entries.length) {
-      box.innerHTML = `<div class="empty"><div class="ico">🎞️</div><b>No films yet.</b><br>Add a film you've seen.</div>`;
+    const items = [
+      ...diary.map((e) => ({ ...e, kind: 'personal', ts: e.updatedAt?.seconds || 0 })),
+      ...roomReviews.map((r) => ({ ...r, kind: 'room', ts: r.updatedAt?.seconds || 0 })),
+    ].sort((a, b) => b.ts - a.ts);
+    if (!items.length) {
+      box.innerHTML = `<div class="empty"><div class="ico">🎞️</div><b>No films yet.</b><br>Add a film, or rate one in a room.</div>`;
+      const stat = document.getElementById('diaryStat');
+      if (stat) stat.textContent = 'Every film you’ve rated — here and in rooms.';
       return;
     }
-    const shelf = entries.map((e) => e.rating);
+    const shelf = items.map((i) => i.rating);
     const avg = shelf.reduce((s, r) => s + r, 0) / shelf.length;
     const stat = document.getElementById('diaryStat');
-    if (stat) stat.innerHTML = `${entries.length} film${entries.length === 1 ? '' : 's'} · <span style="color:${ratingColor(avg)};font-weight:700">${avg.toFixed(1)}</span> average`;
-    box.innerHTML = `<div class="list">${entries.map((e) => `
-      <div class="card tap" data-id="${e.id}"><div class="film">
-        ${posterEl(e.posterPath)}
+    if (stat) stat.innerHTML = `${items.length} rating${items.length === 1 ? '' : 's'} · <span style="color:${ratingColor(avg)};font-weight:700">${avg.toFixed(1)}</span> average`;
+    box.innerHTML = `<div class="list">${items.map((i, idx) => {
+      const tag = i.kind === 'room'
+        ? `<span class="src-tag room">In ${esc(i.roomName || 'a room')}</span>`
+        : `<span class="src-tag">My Films</span>`;
+      return `<div class="card tap" data-idx="${idx}"><div class="film">
+        ${posterEl(i.posterPath)}
         <div class="info">
-          <div class="title">${esc(e.title)}</div>
-          <div class="film-meta"><span class="year-pill">${esc(e.year || '—')}</span></div>
-          <div class="rating-inline mt">${ratingInline(e.rating, 15)}
-            <span class="faint" style="font-size:12.5px">· ${ratingLabel(e.rating, shelf)}</span></div>
-          ${e.review ? `<div class="body" style="margin-top:8px">${esc(e.review)}</div>` : ''}
-        </div></div></div>`).join('')}</div>`;
-    box.querySelectorAll('[data-id]').forEach((el) =>
-      el.onclick = () => openEntry(entries.find((x) => x.id === el.dataset.id)));
-  }));
+          <div class="title">${esc(i.title)}</div>
+          <div class="film-meta"><span class="year-pill">${esc(i.year || '—')}</span>${tag}</div>
+          <div class="rating-inline mt">${ratingInline(i.rating, 15)}
+            <span class="faint" style="font-size:12.5px">· ${ratingLabel(i.rating, shelf)}</span></div>
+          ${i.review ? `<div class="body" style="margin-top:8px">${esc(i.review)}</div>` : ''}
+        </div></div></div>`;
+    }).join('')}</div>`;
+    box.querySelectorAll('[data-idx]').forEach((el) => el.onclick = () => {
+      const i = items[+el.dataset.idx];
+      if (i.kind === 'room') location.hash = '#/room/' + i.roomId;
+      else openEntry(i);
+    });
+  };
+  subs.push(S.watchDiary(me.uid, (e) => { diary = e; render(); }));
+  subs.push(S.watchRoomReviews(me.uid, (r) => { roomReviews = r; render(); }));
 }
 
 // ---------------------------------------------------------------- admin
@@ -431,11 +486,11 @@ async function viewAdmin() {
       await S.setUserStatus(b.dataset.no, 'revoked'); rerun();
     }
   });
-  app.querySelectorAll('[data-user]').forEach((c) => c.onclick = () => adminUserDialog(users.find((u) => u.uid === c.dataset.user)));
+  app.querySelectorAll('[data-user]').forEach((c) => c.onclick = () => adminUserDialog(users.find((u) => u.uid === c.dataset.user), users));
 }
 
 // God-controls panel for one user.
-function adminUserDialog(u) {
+function adminUserDialog(u, allUsers = []) {
   const self = u.uid === me.uid;
   const rows = [`<button class="btn block" data-act="rename">Rename member</button>`];
   if (u.status === 'pending') {
@@ -445,9 +500,11 @@ function adminUserDialog(u) {
     rows.push(u.role === 'admin'
       ? `<button class="btn block" data-act="demote">Remove admin</button>`
       : `<button class="btn block" data-act="promote">Make admin</button>`);
+    rows.push(`<button class="btn block" data-act="visibility">Limit who they can see</button>`);
     rows.push(u.status === 'revoked'
       ? `<button class="btn primary block" data-act="restore">Restore access</button>`
       : `<button class="btn danger block" data-act="revoke">Revoke access</button>`);
+    rows.push(`<button class="btn danger block" data-act="delete">Delete user</button>`);
   }
   const ov = modal(`
     <div class="u-name" style="font-size:19px">${esc(u.name)} ${userBadge(u)}</div>
@@ -474,8 +531,38 @@ function adminUserDialog(u) {
       await S.setUserRole(u.uid, 'admin');
     } else if (act === 'demote') {
       await S.setUserRole(u.uid, 'member');
+    } else if (act === 'visibility') {
+      await visibilityDialog(u, allUsers);
+    } else if (act === 'delete') {
+      if (!(await confirmDialog({ title: `Delete ${u.name}?`, message: 'Removes their account and access completely. This can’t be undone.', confirmText: 'Delete user', danger: true }))) return;
+      await S.deleteUser(u.uid);
     }
     close(); viewAdmin();
+  });
+}
+
+// Admin picks exactly who a member is allowed to see when adding people.
+function visibilityDialog(u, users) {
+  return new Promise((resolve) => {
+    const others = users.filter((x) => x.uid !== u.uid && x.status === 'approved');
+    const cur = new Set(Array.isArray(u.visibleTo) ? u.visibleTo : []);
+    const ov = modal(`
+      <h2>Who ${esc(u.name)} can see</h2>
+      <div class="dialog-sub">Only checked people appear when they add members. Check none = everyone.</div>
+      <div class="dialog-list" style="max-height:46vh;overflow:auto">
+        ${others.length ? others.map((x) => `<label class="check-row"><input type="checkbox" data-uid="${x.uid}" ${cur.has(x.uid) ? 'checked' : ''}><span>${esc(x.name)}</span></label>`).join('') : '<div class="faint" style="font-size:13px">No one else yet.</div>'}
+      </div>
+      <div class="dialog-actions">
+        <button class="btn ghost" data-x>Cancel</button>
+        <button class="btn primary" data-ok>Save</button></div>`);
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.querySelector('[data-x]').onclick = () => done(false);
+    ov.querySelector('[data-ok]').onclick = async () => {
+      const sel = [...ov.querySelectorAll('input:checked')].map((i) => i.dataset.uid);
+      await S.setUserVisibility(u.uid, sel);
+      done(true);
+    };
+    ov.addEventListener('click', (e) => { if (e.target === ov) done(false); });
   });
 }
 
