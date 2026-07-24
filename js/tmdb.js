@@ -1,5 +1,5 @@
 // TMDB client — search films + build poster URLs.
-import { TMDB_TOKEN } from './config.js';
+const { TMDB_TOKEN } = await import('./config.js' + new URL(import.meta.url).search);
 
 const BASE = 'https://api.themoviedb.org/3';
 export const IMG = (path, size = 'w342') =>

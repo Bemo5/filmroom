@@ -1,5 +1,4 @@
 // Firebase init + all data access (auth, users, rooms, films, takes, diary, admin).
-import { firebaseConfig, ADMIN_EMAIL } from './config.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import {
   getAuth, onAuthStateChanged, createUserWithEmailAndPassword,
@@ -10,6 +9,8 @@ import {
   addDoc, getDocs, query, where, orderBy, onSnapshot, serverTimestamp,
   arrayUnion, arrayRemove,
 } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+
+const { firebaseConfig, ADMIN_EMAIL } = await import('./config.js' + new URL(import.meta.url).search);
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);

@@ -1,8 +1,11 @@
 // Filmroom SPA — router + views.
-import { isConfigured } from './config.js';
-import { starRow, starInput, ratingInline, ratingColor, ratingLabel, formatRating } from './stars.js';
-import { IMG, searchFilms } from './tmdb.js';
-import * as S from './store.js';
+// Propagate the cache-bust version (from ?v=… on this module's URL) to every
+// local import, so one deploy refreshes the whole graph — no stale JS.
+const _V = new URL(import.meta.url).search;
+const { isConfigured } = await import('./config.js' + _V);
+const { starRow, starInput, ratingInline, ratingColor, ratingLabel, formatRating } = await import('./stars.js' + _V);
+const { IMG, searchFilms } = await import('./tmdb.js' + _V);
+const S = await import('./store.js' + _V);
 
 const app = document.getElementById('app');
 let me = null;        // firebase auth user
