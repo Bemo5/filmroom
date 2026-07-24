@@ -8,11 +8,10 @@ export function formatRating(rating) {
   return s;
 }
 
-// green for loved, gold for liked, red for suffered — one scale everywhere.
+// One accent everywhere — the rating's value is carried by the number, not a
+// clashing colour. Gold when it counts, muted grey for the low end.
 export function ratingColor(rating) {
-  if (rating >= 8) return 'var(--green)';
-  if (rating >= 5) return 'var(--gold)';
-  return 'var(--red)';
+  return rating >= 5 ? 'var(--gold)' : 'var(--faint)';
 }
 
 // The word for a rating. With 10+ shelfRatings it ranks against the user's own
@@ -73,7 +72,7 @@ function starSVG(fill, size, glow) {
     <defs>
       <clipPath id="c${id}"><rect x="0" y="0" width="${w}" height="100"/></clipPath>
       <linearGradient id="l${id}" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#ecc178"/><stop offset="1" stop-color="#c98f3c"/>
+        <stop offset="0" stop-color="#F5C518"/><stop offset="1" stop-color="#E0A50A"/>
       </linearGradient>
       ${glowFilter}
     </defs>

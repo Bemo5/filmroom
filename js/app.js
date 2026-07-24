@@ -241,9 +241,9 @@ async function viewRoom(roomId) {
       </div>`).join('');
     box.querySelectorAll('[data-rate]').forEach((b) => {
       const f = films.find((x) => x.id === b.dataset.rate);
-      b.onclick = () => rateSheet(f, async (rating, review) => {
+      b.onclick = () => rateSheet(f, { onSave: async (rating, review) => {
         await S.saveTake(roomId, f.id, me, rating, review);
-      });
+      } });
     });
     films.forEach((f) => subs.push(S.watchFilmTakes(roomId, f.id, (takes) => renderTakes(f.id, takes))));
   }));
@@ -308,35 +308,31 @@ function viewDiary() {
       <div><h1>Your diary</h1><p class="subtitle">Every film you've rated.</p></div>
       <button class="btn primary sm" id="add">Add film</button>
     </div>
-    <div id="diary" class="list"><div class="empty"><span class="spinner"></span></div></div>`);
+    <div id="diary"><div class="empty"><span class="spinner"></span></div></div>`);
+  const openEntry = (e) => rateSheet(e, {
+    onSave: (rating, review) => S.saveDiaryEntry(me.uid, e, rating, review),
+    onDelete: async () => {
+      if (await confirmDialog({ title: 'Remove from diary?', message: 'Deletes your rating and take for this film.', confirmText: 'Remove', danger: true })) {
+        await S.deleteDiaryEntry(me.uid, e.tmdbId); return true;
+      }
+    },
+  });
   document.getElementById('add').onclick = () => searchSheet((film) =>
-    rateSheet(film, (rating, review) => S.saveDiaryEntry(me.uid, film, rating, review)));
+    rateSheet(film, { onSave: (rating, review) => S.saveDiaryEntry(me.uid, film, rating, review) }));
   subs.push(S.watchDiary(me.uid, (entries) => {
     const box = document.getElementById('diary');
     if (!box) return;
     if (!entries.length) {
-      box.innerHTML = `<div class="empty"><div class="ico">📖</div>Your diary is empty.<br>Add a film you've seen.</div>`;
+      box.innerHTML = `<div class="empty"><div class="ico">🎞️</div><b>Your diary is empty.</b><br>Add a film you've seen.</div>`;
       return;
     }
-    const shelf = entries.map((e) => e.rating);
-    box.innerHTML = entries.map((e) => `
-      <div class="card"><div class="film">
-        ${posterEl(e.posterPath)}
-        <div class="info">
-          <div class="row-between"><div><div class="title">${esc(e.title)}</div>
-            <div class="year">${esc(e.year)}</div></div>${ratingChip(e.rating)}</div>
-          <div style="margin-top:6px">${starRow(e.rating, 15)}</div>
-          <div class="rating-label">${ratingLabel(e.rating, shelf)}</div>
-          ${e.review ? `<div class="take body mt">${esc(e.review)}</div>` : ''}
-          <div class="mt"><button class="btn ghost sm" data-edit="${e.id}">Edit</button>
-            <button class="btn ghost sm" data-del="${e.id}">Delete</button></div>
-        </div></div></div>`).join('');
-    box.querySelectorAll('[data-edit]').forEach((b) => { const e = entries.find((x) => x.id === b.dataset.edit);
-      b.onclick = () => rateSheet(e, (rating, review) => S.saveDiaryEntry(me.uid, e, rating, review)); });
-    box.querySelectorAll('[data-del]').forEach((b) => b.onclick = async () => {
-      if (await confirmDialog({ title: 'Remove from diary?', message: 'This deletes your rating and take for this film.', confirmText: 'Remove', danger: true }))
-        S.deleteDiaryEntry(me.uid, b.dataset.del);
-    });
+    box.innerHTML = `<div class="poster-grid">${entries.map((e) => `
+      <div class="pg-item" data-id="${e.id}">
+        ${e.posterPath ? `<img class="pg-poster" src="${IMG(e.posterPath)}" alt="" loading="lazy">` : `<div class="pg-poster ph">🎞️</div>`}
+        <span class="pg-rating"><span class="st">★</span>${formatRating(e.rating)}</span>
+      </div>`).join('')}</div>`;
+    box.querySelectorAll('[data-id]').forEach((el) =>
+      el.onclick = () => openEntry(entries.find((x) => x.id === el.dataset.id)));
   }));
 }
 
@@ -523,7 +519,7 @@ function searchSheet(onPick) {
   });
 }
 
-function rateSheet(film, onSave) {
+function rateSheet(film, { onSave, onDelete } = {}) {
   openSheet(film.title, `
     <div class="film mt">${posterEl(film.posterPath)}
       <div class="info"><div class="title">${esc(film.title)}</div><div class="year">${esc(film.year)}</div></div></div>
@@ -532,17 +528,21 @@ function rateSheet(film, onSave) {
     <div class="rating-label" id="rlabel"></div>
     <div class="field mt"><label>Your take (optional)</label>
       <textarea class="input" id="review" placeholder="What did you think?">${esc(film.review || '')}</textarea></div>
-    <button class="btn primary block" id="save">Save</button>`);
+    <button class="btn primary block" id="save">Save</button>
+    ${onDelete ? `<button class="btn ghost block mt" id="del">Remove from diary</button>` : ''}`);
   const holder = document.getElementById('starHolder');
   const label = document.getElementById('rlabel');
   let rating = film.rating || 0;
-  const si = starInput({ value: rating, onChange: (v) => { rating = v; label.textContent = `${formatRating(v)} / 10 · ${ratingLabel(v)}`; } });
+  const showLabel = (v) => { label.textContent = `${formatRating(v)} / 10 · ${ratingLabel(v)}`; };
+  const si = starInput({ value: rating, onChange: (v) => { rating = v; showLabel(v); } });
   holder.appendChild(si); si.refresh();
-  if (rating) label.textContent = `${formatRating(rating)} / 10 · ${ratingLabel(rating)}`;
+  if (rating) showLabel(rating);
   document.getElementById('save').onclick = async () => {
     if (!rating) { label.textContent = 'Tap the stars to set a rating first.'; return; }
     const btn = document.getElementById('save'); btn.disabled = true; btn.textContent = 'Saving…';
     await onSave(rating, document.getElementById('review').value.trim());
     closeSheet();
   };
+  const del = document.getElementById('del');
+  if (del) del.onclick = async () => { if (await onDelete()) closeSheet(); };
 }
