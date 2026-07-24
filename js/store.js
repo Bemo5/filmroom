@@ -44,8 +44,13 @@ export async function getProfile(uid) {
 
 // ---------- Users / admin ----------
 export async function allUsers() {
-  const snap = await getDocs(query(collection(db, 'users'), orderBy('createdAt', 'desc')));
+  const snap = await getDocs(collection(db, 'users'));
   return snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+}
+// Live list of all users — so pending signups appear in Admin the instant they
+// happen. No orderBy (that would hide any doc missing a createdAt field).
+export function watchAllUsers(cb) {
+  return onSnapshot(collection(db, 'users'), (s) => cb(s.docs.map((d) => ({ uid: d.id, ...d.data() }))), () => {});
 }
 export function setUserStatus(uid, status) {
   return updateDoc(doc(db, 'users', uid), { status });

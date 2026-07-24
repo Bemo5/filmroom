@@ -58,7 +58,9 @@ if (!isConfigured) {
       // Live-watch our own doc so approval (or restore) advances us automatically.
       if (statusWatch) statusWatch();
       const from = profile.status;
-      statusWatch = S.watchProfile(user.uid, (p) => { if (!p || p.status !== from) location.reload(); });
+      // Reload only once the doc exists AND the status actually changed — never
+      // on a missing doc (that would loop).
+      statusWatch = S.watchProfile(user.uid, (p) => { if (p && p.status && p.status !== from) location.reload(); });
       return;
     }
     cfg = await S.getAppConfig();
@@ -463,33 +465,36 @@ async function viewAdmin() {
     await S.setAppConfig({ theme: cfg.theme });
   });
 
-  const users = await S.allUsers();
-  usersById = Object.fromEntries(users.map((u) => [u.uid, u]));
-  const pending = users.filter((u) => u.status === 'pending');
-  const pend = document.getElementById('pending');
-  if (pending.length) {
-    pend.innerHTML = `<div class="section-title">Pending requests</div><div class="list">` +
-      pending.map((u) => `<div class="card row-between">
-        <div><div class="u-name">${esc(u.name)} <span class="badge pending">pending</span></div>
+  // Live — pending signups and changes appear instantly, no reopening the tab.
+  subs.push(S.watchAllUsers((users) => {
+    users.sort((a, b) => (b.createdAt?.seconds || 1e15) - (a.createdAt?.seconds || 1e15));
+    usersById = Object.fromEntries(users.map((u) => [u.uid, u]));
+    const pend = document.getElementById('pending');
+    const allBox = document.getElementById('all');
+    if (!pend || !allBox) return;
+    const pending = users.filter((u) => u.status === 'pending');
+    pend.innerHTML = pending.length
+      ? `<div class="section-title">Pending requests (${pending.length})</div><div class="list">` +
+        pending.map((u) => `<div class="card row-between">
+          <div><div class="u-name">${esc(u.name)} <span class="badge pending">pending</span></div>
+            <div class="u-email">${esc(u.email)}</div></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn primary sm" data-ok="${u.uid}">Approve</button>
+            <button class="btn danger sm" data-no="${u.uid}">Deny</button></div></div>`).join('') + `</div>`
+      : '';
+    allBox.innerHTML = users.map((u) => `
+      <div class="card tap row-between" data-user="${u.uid}">
+        <div><div class="u-name">${esc(u.name)} ${userBadge(u)}${u.uid === me.uid ? '<span class="faint" style="font-weight:500">· you</span>' : ''}</div>
           <div class="u-email">${esc(u.email)}</div></div>
-        <div style="display:flex;gap:8px">
-          <button class="btn primary sm" data-ok="${u.uid}">Approve</button>
-          <button class="btn danger sm" data-no="${u.uid}">Deny</button></div></div>`).join('') + `</div>`;
-  }
-  document.getElementById('all').innerHTML = users.map((u) => `
-    <div class="card tap row-between" data-user="${u.uid}">
-      <div><div class="u-name">${esc(u.name)} ${userBadge(u)}${u.uid === me.uid ? '<span class="faint" style="font-weight:500">· you</span>' : ''}</div>
-        <div class="u-email">${esc(u.email)}</div></div>
-      <div class="chev">›</div></div>`).join('');
-
-  const rerun = () => viewAdmin();
-  pend?.querySelectorAll('[data-ok]').forEach((b) => b.onclick = async () => { await S.setUserStatus(b.dataset.ok, 'approved'); rerun(); });
-  pend?.querySelectorAll('[data-no]').forEach((b) => b.onclick = async () => {
-    if (await confirmDialog({ title: 'Deny this request?', message: 'They won’t be able to log in.', confirmText: 'Deny', danger: true })) {
-      await S.setUserStatus(b.dataset.no, 'revoked'); rerun();
-    }
-  });
-  app.querySelectorAll('[data-user]').forEach((c) => c.onclick = () => adminUserDialog(users.find((u) => u.uid === c.dataset.user), users));
+        <div class="chev">›</div></div>`).join('');
+    pend.querySelectorAll('[data-ok]').forEach((b) => b.onclick = async () => { await S.setUserStatus(b.dataset.ok, 'approved'); });
+    pend.querySelectorAll('[data-no]').forEach((b) => b.onclick = async () => {
+      if (await confirmDialog({ title: 'Deny this request?', message: 'They won’t be able to log in.', confirmText: 'Deny', danger: true })) {
+        await S.setUserStatus(b.dataset.no, 'revoked');
+      }
+    });
+    allBox.querySelectorAll('[data-user]').forEach((c) => c.onclick = () => adminUserDialog(users.find((u) => u.uid === c.dataset.user), users));
+  }));
 }
 
 // God-controls panel for one user.
